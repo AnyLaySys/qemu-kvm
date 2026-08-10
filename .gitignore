@@ -21,4 +21,5 @@ GTAGS
 *.depend_raw
 *.swp
 *.patch
+!/patch/virglrenderer_android.patch
 *.gcov
