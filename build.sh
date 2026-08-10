@@ -531,7 +531,7 @@ buildQemu() {
     --target-list=aarch64-softmmu
     --enable-kvm
     --disable-tcg
-    --disable-vnc
+    --enable-vnc
     --disable-vhost-user
     --disable-virtfs
     --disable-download
@@ -571,6 +571,7 @@ packageQemu() {
   mkdir -p "$qemuLib" "$qemuFw"
   fetch "$qemuRawUrl/pc-bios/efi-virtio.rom" "$srcDir/efi-virtio.rom"
   cp -f "$srcDir/efi-virtio.rom" "$qemuFw/efi-virtio.rom"
+  cp -a "$scriptDir/pc-bios/keymaps" "$qemuFw/"
   "$strip" --strip-all "$qemuBinary" -o "$qemuDir/qemu-system-aarch64"
   "$strip" --strip-all "$jniBinary" -o "$qemuDir/libqemu-kvm.so"
   patchelf --set-rpath '$ORIGIN/lib' "$qemuDir/qemu-system-aarch64"
