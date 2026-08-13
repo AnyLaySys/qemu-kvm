@@ -209,7 +209,11 @@ collectJni() {
   local packedName
   local destPath
   local index=0
+  local jniSeen="|"
   jniQueue=("$@")
+  for elfPath in "${jniQueue[@]}"; do
+    jniSeen+="$elfPath|"
+  done
   while [ "$index" -lt "${#jniQueue[@]}" ]; do
     elfPath="${jniQueue[$index]}"
     index=$((index + 1))
@@ -227,11 +231,12 @@ collectJni() {
       if [ "$neededName" != "$packedName" ]; then
         patchelf --replace-needed "$neededName" "$packedName" "$elfPath"
       fi
-      if [ ! -f "$destPath" ]; then
+      if [[ "$jniSeen" != *"|$destPath|"* ]]; then
         cp -Lf "$sourcePath" "$destPath"
         "$strip" --strip-all "$destPath"
         patchelf --set-soname "$packedName" "$destPath"
         patchelf --set-rpath '$ORIGIN' "$destPath"
+        jniSeen+="$destPath|"
         jniQueue+=("$destPath")
       fi
     done < <(neededLibs "$elfPath")
@@ -578,7 +583,6 @@ packageQemu() {
   patchelf --set-rpath '$ORIGIN/lib' "$qemuDir/libqemu-kvm.so"
   collectRuntime "$qemuDir/qemu-system-aarch64" "$qemuDir/libqemu-kvm.so"
   mkdir -p "$jniDir"
-  rm -f "$jniDir/libqemu-kvm.so"
   "$strip" --strip-all "$jniBinary" -o "$jniDir/libqemu-kvm.so"
   patchelf --set-rpath '$ORIGIN' "$jniDir/libqemu-kvm.so"
   collectJni "$jniDir/libqemu-kvm.so"
