@@ -534,8 +534,16 @@ buildQemu() {
     --cc="$CC"
     --cxx="$CXX"
     --target-list=aarch64-softmmu
-    --enable-kvm
+    --enable-gzvm
+    --disable-kvm
     --disable-tcg
+    --disable-hvf
+    --disable-whpx
+    --disable-nvmm
+    --disable-mshv
+    --disable-nitro
+    --disable-xen
+    --disable-xen-pci-passthrough
     --enable-vnc
     --disable-vhost-user
     --disable-virtfs

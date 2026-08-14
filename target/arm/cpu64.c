@@ -30,6 +30,8 @@
 #include "system/hw_accel.h"
 #include "system/qtest.h"
 #include "system/tcg.h"
+#include "system/gzvm.h"
+#include "gzvm_arm.h"
 #include "kvm_arm.h"
 #include "hvf_arm.h"
 #include "whpx_arm.h"
@@ -802,7 +804,11 @@ void aarch64_host_initfn(Object *obj)
     }
 #endif
 
-#if defined(CONFIG_KVM)
+#if defined(CONFIG_GZVM)
+    if (gzvm_enabled()) {
+        gzvm_arm_set_cpu_features_from_host(cpu);
+    }
+#elif defined(CONFIG_KVM)
     kvm_arm_set_cpreg_mig_tolerances(cpu);
     kvm_arm_set_cpu_features_from_host(cpu);
     aarch64_add_sve_properties(obj);
@@ -821,7 +827,7 @@ void aarch64_host_initfn(Object *obj)
 static const ARMCPUInfo aarch64_cpus[] = {
     { .name = "cortex-a57",         .initfn = aarch64_a57_initfn },
     { .name = "cortex-a53",         .initfn = aarch64_a53_initfn },
-#if defined(CONFIG_KVM) || defined(CONFIG_HVF) || defined(CONFIG_WHPX)
+#if defined(CONFIG_GZVM) || defined(CONFIG_KVM) || defined(CONFIG_HVF) || defined(CONFIG_WHPX)
     { .name = "host",               .initfn = aarch64_host_initfn },
 #endif
 };

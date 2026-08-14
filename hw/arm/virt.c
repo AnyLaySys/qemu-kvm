@@ -46,6 +46,7 @@
 #include "system/runstate.h"
 #include "system/tpm.h"
 #include "system/tcg.h"
+#include "system/gzvm.h"
 #include "system/kvm.h"
 #include "system/hvf.h"
 #include "system/whpx.h"
@@ -65,6 +66,7 @@
 #include "hw/core/platform-bus.h"
 #include "hw/core/qdev-properties.h"
 #include "hw/arm/fdt.h"
+#include "hw/arm/virt-gzvm.h"
 #include "hw/intc/arm_gic.h"
 #include "hw/intc/arm_gicv3_common.h"
 #include "hw/intc/arm_gicv3_its_common.h"
@@ -1809,6 +1811,18 @@ static void virt_flash_create(VirtMachineState *vms)
     vms->flash[1] = virt_flash_create1(vms, "virt.flash1", "pflash1");
 }
 
+static void virt_flash_destroy(VirtMachineState *vms)
+{
+    static const char * const aliases[] = { "pflash0", "pflash1" };
+
+    for (int i = 0; i < ARRAY_SIZE(vms->flash); i++) {
+        object_property_del(OBJECT(vms), aliases[i]);
+        object_unparent(OBJECT(vms->flash[i]));
+        object_unref(OBJECT(vms->flash[i]));
+        vms->flash[i] = NULL;
+    }
+}
+
 static void virt_flash_map1(PFlashCFI01 *flash,
                             hwaddr base, hwaddr size,
                             MemoryRegion *sysmem)
@@ -1898,6 +1912,50 @@ static bool virt_firmware_init(VirtMachineState *vms,
     const char *bios_name;
     BlockBackend *pflash_blk0;
 
+    bios_name = MACHINE(vms)->firmware;
+    if (gzvm_enabled()) {
+        char *fname;
+        int64_t image_size;
+        uint64_t rom_size;
+
+        virt_flash_destroy(vms);
+
+        if (!bios_name) {
+            return false;
+        }
+
+        fname = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
+        if (!fname) {
+            error_report("Could not find ROM image '%s'", bios_name);
+            exit(1);
+        }
+
+        image_size = get_image_size(fname, NULL);
+        if (image_size <= 0) {
+            error_report("Could not load ROM image '%s'", bios_name);
+            exit(1);
+        }
+        if (image_size > vms->memmap[VIRT_FLASH].size) {
+            error_report("ROM image '%s' is too large for the flash window",
+                         bios_name);
+            exit(1);
+        }
+
+        rom_size = QEMU_ALIGN_UP(image_size, qemu_real_host_page_size());
+        memory_region_init_ram_flags_nomigrate(&vms->firmware, OBJECT(vms),
+                                               "virt.gzvm-firmware", rom_size,
+                                               0, &error_fatal);
+        memory_region_set_readonly(&vms->firmware, true);
+        memory_region_add_subregion(sysmem, vms->memmap[VIRT_FLASH].base,
+                                    &vms->firmware);
+        if (load_image_mr(fname, &vms->firmware) != image_size) {
+            error_report("Could not load ROM image '%s'", bios_name);
+            exit(1);
+        }
+        g_free(fname);
+        return true;
+    }
+
     /* Map legacy -drive if=pflash to machine properties */
     for (i = 0; i < ARRAY_SIZE(vms->flash); i++) {
         pflash_cfi01_legacy_drive(vms->flash[i],
@@ -1908,7 +1966,6 @@ static bool virt_firmware_init(VirtMachineState *vms,
 
     pflash_blk0 = pflash_cfi01_get_blk(vms->flash[0]);
 
-    bios_name = MACHINE(vms)->firmware;
     if (bios_name) {
         char *fname;
         MemoryRegion *mr;
@@ -2417,6 +2474,7 @@ void virt_machine_done(Notifier *notifier, void *data)
     ARMCPU *cpu = ARM_CPU(first_cpu);
     struct arm_boot_info *info = &vms->bootinfo;
     AddressSpace *as = arm_boot_address_space(cpu, info);
+    int dtb_size;
 
     cxl_hook_up_pxb_registers(vms->bus, &vms->cxl_devices_state,
                               &error_fatal);
@@ -2440,9 +2498,12 @@ void virt_machine_done(Notifier *notifier, void *data)
                                        vms->memmap[VIRT_PLATFORM_BUS].size,
                                        vms->irqmap[VIRT_PLATFORM_BUS]);
     }
-    if (arm_load_dtb(info->dtb_start, info, info->dtb_limit, as, ms, cpu) < 0) {
+    dtb_size = arm_load_dtb(info->dtb_start, info, info->dtb_limit,
+                            as, ms, cpu);
+    if (dtb_size < 0) {
         exit(1);
     }
+    virt_gzvm_post_dtb(vms, info->dtb_start, dtb_size, as);
 
     pci_bus_add_fw_cfg_extra_pci_roots(vms->fw_cfg, vms->bus,
                                        &error_abort);
@@ -2694,7 +2755,9 @@ static void finalize_gic_version(VirtMachineState *vms)
     int gics_supported = 0;
 
     /* Determine which GIC versions the current environment supports */
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+    if (gzvm_enabled()) {
+        gics_supported |= VIRT_GIC_VERSION_3_MASK;
+    } else if (kvm_enabled() && kvm_irqchip_in_kernel()) {
         int probe_bitmap = kvm_arm_vgic_probe();
 
         if (!probe_bitmap) {
@@ -2765,6 +2828,8 @@ static void finalize_msi_controller(VirtMachineState *vms)
     }
     if (vms->msi_controller == VIRT_MSI_CTRL_AUTO) {
         if (vms->gic_version == VIRT_GIC_VERSION_2) {
+            vms->msi_controller = VIRT_MSI_CTRL_GICV2M;
+        } else if (gzvm_enabled()) {
             vms->msi_controller = VIRT_MSI_CTRL_GICV2M;
         } else if (whpx_enabled()) {
             vms->msi_controller = VIRT_MSI_CTRL_GICV2M;
@@ -2940,6 +3005,7 @@ static void machvirt_init(MachineState *machine)
         memory_region_add_subregion_overlap(secure_sysmem, 0, sysmem, -1);
     }
 
+    virt_gzvm_init(vms);
     firmware_loaded = virt_firmware_init(vms, sysmem,
                                          secure_sysmem ?: sysmem);
 
@@ -2956,7 +3022,8 @@ static void machvirt_init(MachineState *machine)
     if (vms->secure && firmware_loaded) {
         vms->psci_conduit = QEMU_PSCI_CONDUIT_DISABLED;
     } else if (vms->virt) {
-        vms->psci_conduit = QEMU_PSCI_CONDUIT_SMC;
+        vms->psci_conduit = gzvm_enabled() ? QEMU_PSCI_CONDUIT_HVC
+                                           : QEMU_PSCI_CONDUIT_SMC;
     } else {
         vms->psci_conduit = QEMU_PSCI_CONDUIT_HVC;
     }
@@ -3153,9 +3220,12 @@ static void machvirt_init(MachineState *machine)
 
     cxl_fmws_update_mmio();
 
-    virt_flash_fdt(vms, sysmem, secure_sysmem ?: sysmem);
+    if (!gzvm_enabled()) {
+        virt_flash_fdt(vms, sysmem, secure_sysmem ?: sysmem);
+    }
 
     create_gic(vms, sysmem);
+    virt_gzvm_post_gic(vms);
     create_msi_controller(vms);
 
     virt_post_cpus_gic_realized(vms, sysmem);
@@ -3257,6 +3327,7 @@ static void machvirt_init(MachineState *machine)
     vms->bootinfo.get_dtb = machvirt_dtb;
     vms->bootinfo.skip_dtb_autoload = true;
     vms->bootinfo.firmware_loaded = firmware_loaded;
+    virt_gzvm_set_bootinfo(vms, firmware_loaded);
     vms->bootinfo.psci_conduit = vms->psci_conduit;
     arm_load_kernel(ARM_CPU(first_cpu), machine, &vms->bootinfo);
 
@@ -4147,7 +4218,8 @@ static GPtrArray *virt_get_valid_cpu_types(const MachineState *ms)
     if (target_aarch64()) {
         g_ptr_array_add(vct, g_strdup(ARM_CPU_TYPE_NAME("cortex-a53")));
         g_ptr_array_add(vct, g_strdup(ARM_CPU_TYPE_NAME("cortex-a57")));
-        if (kvm_enabled() || hvf_enabled() || whpx_enabled()) {
+        if (gzvm_enabled() || kvm_enabled() || hvf_enabled() ||
+            whpx_enabled()) {
             g_ptr_array_add(vct, g_strdup(ARM_CPU_TYPE_NAME("host")));
         }
     }

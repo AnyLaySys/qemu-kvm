@@ -31,6 +31,7 @@
 #include "migration/vmstate.h"
 #include "gicv3_internal.h"
 #include "hw/arm/linux-boot-if.h"
+#include "system/gzvm.h"
 #include "system/kvm.h"
 #include "system/whpx.h"
 #include "system/hvf.h"
@@ -656,7 +657,9 @@ type_init(register_types)
 
 const char *gicv3_class_name(void)
 {
-    if (kvm_irqchip_in_kernel()) {
+    if (gzvm_enabled()) {
+        return "gzvm-arm-gicv3";
+    } else if (kvm_irqchip_in_kernel()) {
         return "kvm-arm-gicv3";
     } else if (whpx_enabled()) {
         return TYPE_WHPX_GICV3;

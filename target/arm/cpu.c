@@ -47,6 +47,8 @@
 #include "system/tcg.h"
 #include "system/qtest.h"
 #include "system/hw_accel.h"
+#include "system/gzvm.h"
+#include "gzvm_arm.h"
 #include "kvm_arm.h"
 #include "disas/capstone.h"
 #include "fpu/softfloat.h"
@@ -670,7 +672,9 @@ static void arm_cpu_reset_hold(Object *obj, ResetType type)
     arm_set_ah_fp_behaviours(&env->vfp.fp_status[FPST_AH_F16]);
 
 #ifndef CONFIG_USER_ONLY
-    if (kvm_enabled()) {
+    if (gzvm_enabled()) {
+        qdev_init_gpio_in(DEVICE(cpu), arm_cpu_gzvm_set_irq, 6);
+    } else if (kvm_enabled()) {
         kvm_arm_reset_vcpu(cpu);
     }
 #endif
@@ -1289,7 +1293,7 @@ static void arm_cpu_initfn(Object *obj)
     }
     cpu->kvm_target = QEMU_KVM_ARM_TARGET_NONE;
 
-    if (tcg_enabled() || hvf_enabled()) {
+    if (gzvm_enabled() || tcg_enabled() || hvf_enabled()) {
         /* TCG and HVF implement PSCI 1.1 */
         cpu->psci_version = QEMU_PSCI_VERSION_1_1;
     } else if (whpx_enabled()) {
@@ -1829,8 +1833,9 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
      * this is the first point where we can report it.
      */
     if (cpu->host_cpu_probe_failed) {
-        if (!kvm_enabled() && !hvf_enabled() && !whpx_enabled()) {
-            error_setg(errp, "The 'host' CPU type can only be used with KVM, HVF or WHPX");
+        if (!gzvm_enabled() && !kvm_enabled() && !hvf_enabled() &&
+            !whpx_enabled()) {
+            error_setg(errp, "The 'host' CPU type can only be used with GZVM, KVM, HVF or WHPX");
         } else {
             error_setg(errp, "Failed to retrieve host CPU features");
         }

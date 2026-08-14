@@ -310,6 +310,7 @@ accelerator_targets += { 'CONFIG_XEN': xen_targets }
 
 if cpu == 'aarch64'
   accelerator_targets += {
+    'CONFIG_GZVM': ['aarch64-softmmu'],
     'CONFIG_HVF': ['aarch64-softmmu'],
     'CONFIG_NITRO': ['aarch64-softmmu'],
     'CONFIG_WHPX': ['aarch64-softmmu']
@@ -878,6 +879,9 @@ endif
 ###############################################
 
 accelerators = []
+if get_option('gzvm').allowed() and host_os == 'linux'
+  accelerators += 'CONFIG_GZVM'
+endif
 if get_option('kvm').allowed() and host_os == 'linux'
   accelerators += 'CONFIG_KVM'
 endif
@@ -951,6 +955,9 @@ if have_tcg
   accelerators += 'CONFIG_TCG'
 endif
 
+if 'CONFIG_GZVM' not in accelerators and get_option('gzvm').enabled()
+  error('GZVM not available on this platform')
+endif
 if 'CONFIG_KVM' not in accelerators and get_option('kvm').enabled()
   error('KVM not available on this platform')
 endif
@@ -4837,6 +4844,7 @@ endif
 # Targets and accelerators
 summary_info = {}
 if have_system
+  summary_info += {'GZVM support':      config_all_accel.has_key('CONFIG_GZVM')}
   summary_info += {'KVM support':       config_all_accel.has_key('CONFIG_KVM')}
   summary_info += {'Nitro support':     config_all_accel.has_key('CONFIG_NITRO')}
   summary_info += {'HVF support':       config_all_accel.has_key('CONFIG_HVF')}

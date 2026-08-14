@@ -1,3 +1,6 @@
+config GZVM
+    bool
+
 config WHPX
     bool
 

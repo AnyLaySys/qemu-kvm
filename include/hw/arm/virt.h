@@ -164,6 +164,7 @@ struct VirtMachineState {
     Notifier machine_done;
     DeviceState *platform_bus_dev;
     FWCfgState *fw_cfg;
+    MemoryRegion firmware;
     PFlashCFI01 *flash[2];
     bool secure;
     bool highmem;

@@ -31,6 +31,7 @@
 #include "qemu/config-file.h"
 #include "qemu/option.h"
 #include "qemu/units.h"
+#include "system/gzvm.h"
 #include "qemu/bswap.h"
 
 /* Kernel boot protocol is specified in the kernel docs
@@ -691,6 +692,9 @@ static void do_cpu_reset(void *opaque)
             }
 
             cpu_set_pc(cs, entry);
+            if (gzvm_enabled()) {
+                env->xregs[0] = info->dtb_start;
+            }
         } else {
             /*
              * If we are booting Linux then we might need to do so at:
@@ -724,7 +728,12 @@ static void do_cpu_reset(void *opaque)
             if (cpu == info->primary_cpu) {
                 AddressSpace *as = arm_boot_address_space(cpu, info);
 
-                cpu_set_pc(cs, info->loader_start);
+                if (gzvm_enabled()) {
+                    cpu_set_pc(cs, info->entry);
+                    env->xregs[0] = info->dtb_start;
+                } else {
+                    cpu_set_pc(cs, info->loader_start);
+                }
 
                 if (!have_dtb(info)) {
                     set_kernel_args(info, as);
@@ -1116,7 +1125,7 @@ static void arm_setup_firmware_boot(ARMCPU *cpu, struct arm_boot_info *info)
 {
     /* Set up for booting firmware (which might load a kernel via fw_cfg) */
 
-    if (have_dtb(info)) {
+    if (have_dtb(info) && !(gzvm_enabled() && info->dtb_start)) {
         /*
          * If we have a device tree blob, but no kernel to supply it to (or
          * the kernel is supposed to be loaded by the bootloader), copy the
@@ -1217,6 +1226,12 @@ void arm_load_kernel(ARMCPU *cpu, MachineState *ms, struct arm_boot_info *info)
         arm_setup_direct_kernel_boot(cpu, info);
     }
 
+    if (gzvm_enabled()) {
+        for (cs = first_cpu; cs; cs = CPU_NEXT(cs)) {
+            ARM_CPU(cs)->env.boot_info = info;
+        }
+    }
+
     /*
      * Disable the PSCI conduit if it is set up to target the same
      * or a lower EL than the one we're going to start the guest code in.
@@ -1248,8 +1263,9 @@ void arm_load_kernel(ARMCPU *cpu, MachineState *ms, struct arm_boot_info *info)
         boot_el = arm_feature(env, ARM_FEATURE_EL2) ? 2 : 1;
     }
 
-    if ((info->psci_conduit == QEMU_PSCI_CONDUIT_HVC && boot_el >= 2) ||
-        (info->psci_conduit == QEMU_PSCI_CONDUIT_SMC && boot_el == 3)) {
+    if (!gzvm_enabled() &&
+        ((info->psci_conduit == QEMU_PSCI_CONDUIT_HVC && boot_el >= 2) ||
+         (info->psci_conduit == QEMU_PSCI_CONDUIT_SMC && boot_el == 3))) {
         info->psci_conduit = QEMU_PSCI_CONDUIT_DISABLED;
     }
 
@@ -1260,7 +1276,7 @@ void arm_load_kernel(ARMCPU *cpu, MachineState *ms, struct arm_boot_info *info)
             object_property_set_int(cpuobj, "psci-conduit", info->psci_conduit,
                                     &error_abort);
             /* Secondary CPUs start in PSCI powered-down state.  */
-            if (ARM_CPU(cs) != info->primary_cpu) {
+            if (ARM_CPU(cs) != info->primary_cpu && !gzvm_enabled()) {
                 object_property_set_bool(cpuobj, "start-powered-off", true,
                                          &error_abort);
             }

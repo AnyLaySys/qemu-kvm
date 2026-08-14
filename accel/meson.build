@@ -4,6 +4,7 @@ user_ss.add(files('accel-user.c'))
 
 subdir('tcg')
 if have_system
+  subdir('gzvm')
   subdir('hvf')
   subdir('whpx')
   subdir('qtest')
